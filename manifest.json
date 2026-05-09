@@ -1,0 +1,17 @@
+{
+  "name": "AEGIS — Operations Command",
+  "short_name": "AEGIS",
+  "description": "Intelligence-style operations dashboard for personal directives.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#07090d",
+  "theme_color": "#07090d",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml"
+    }
+  ]
+}
