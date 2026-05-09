@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#07090d" />
+  <meta name="description" content="AEGIS — Operations Command. A discreet, single-user intelligence-style task terminal." />
+  <title>AEGIS — Operations Command</title>
+
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600&family=JetBrains+Mono:wght@300;400;500&family=Manrope:wght@300;400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Ambient background layers -->
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="bg-vignette" aria-hidden="true"></div>
+  <div class="bg-scanline" aria-hidden="true"></div>
+
+  <!-- Boot sequence overlay -->
+  <div class="boot" id="boot" aria-hidden="true">
+    <div class="boot__content">
+      <div class="boot__crest">
+        <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <circle cx="32" cy="32" r="30" fill="none" stroke="currentColor" stroke-width="0.6" opacity="0.4"/>
+          <circle cx="32" cy="32" r="22" fill="none" stroke="currentColor" stroke-width="0.6" opacity="0.6"/>
+          <path d="M32 6 L32 58 M6 32 L58 32" stroke="currentColor" stroke-width="0.4" opacity="0.3"/>
+          <path d="M32 14 L40 32 L32 50 L24 32 Z" fill="currentColor" opacity="0.85"/>
+        </svg>
+      </div>
+      <div class="boot__title">AEGIS</div>
+      <div class="boot__sub">OPERATIONS COMMAND</div>
+      <div class="boot__bar"><span></span></div>
+      <div class="boot__status" id="bootStatus">INITIALIZING SECURE TERMINAL…</div>
+    </div>
+  </div>
+
+  <!-- Top command bar -->
+  <header class="topbar">
+    <div class="topbar__left">
+      <div class="brand">
+        <svg class="brand__mark" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <circle cx="12" cy="12" r="11" fill="none" stroke="currentColor" stroke-width="0.5" opacity="0.5"/>
+          <circle cx="12" cy="12" r="7.5" fill="none" stroke="currentColor" stroke-width="0.5" opacity="0.7"/>
+          <path d="M12 4 L15 12 L12 20 L9 12 Z" fill="currentColor"/>
+        </svg>
+        <div class="brand__text">
+          <div class="brand__name">AEGIS</div>
+          <div class="brand__sub">OPS · COMMAND</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="topbar__center">
+      <div class="hud">
+        <span class="hud__dot" id="hudDot"></span>
+        <span class="hud__label">SECURE</span>
+        <span class="hud__sep">//</span>
+        <span class="hud__time" id="hudTime">00:00:00</span>
+        <span class="hud__sep">//</span>
+        <span class="hud__date" id="hudDate">— — —</span>
+      </div>
+    </div>
+
+    <div class="topbar__right">
+      <button class="iconbtn" id="searchBtn" aria-label="Search directives" title="Search (/)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+          <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
+        </svg>
+      </button>
+      <button class="iconbtn" id="archiveBtn" aria-label="Open intel archive" title="Intel Archive">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 001 1h12a1 1 0 001-1V8"/><path d="M10 12h4"/>
+        </svg>
+      </button>
+      <button class="iconbtn" id="statsBtn" aria-label="Open analytics" title="Analytics">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+          <path d="M4 19V5"/><path d="M4 19h16"/><rect x="7" y="11" width="3" height="6"/><rect x="12" y="7" width="3" height="10"/><rect x="17" y="13" width="3" height="4"/>
+        </svg>
+      </button>
+      <button class="iconbtn" id="settingsBtn" aria-label="Open settings" title="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.6 1.6 0 00.32 1.76l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.6 1.6 0 00-1.76-.32 1.6 1.6 0 00-.97 1.46V21a2 2 0 11-4 0v-.09a1.6 1.6 0 00-1.05-1.46 1.6 1.6 0 00-1.76.32l-.06.06A2 2 0 113.46 16.99l.06-.06a1.6 1.6 0 00.32-1.76 1.6 1.6 0 00-1.46-.97H2a2 2 0 110-4h.09a1.6 1.6 0 001.46-1.05 1.6 1.6 0 00-.32-1.76l-.06-.06A2 2 0 116.99 3.46l.06.06a1.6 1.6 0 001.76.32H9a1.6 1.6 0 00.97-1.46V2a2 2 0 114 0v.09a1.6 1.6 0 00.97 1.46 1.6 1.6 0 001.76-.32l.06-.06a2 2 0 112.83 2.83l-.06.06a1.6 1.6 0 00-.32 1.76V9a1.6 1.6 0 001.46.97H22a2 2 0 110 4h-.09a1.6 1.6 0 00-1.46.97z"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Briefing strip -->
+  <section class="briefing">
+    <div class="briefing__row">
+      <div class="briefing__greeting">
+        <div class="briefing__eyebrow">DAILY BRIEFING</div>
+        <h1 class="briefing__title" id="greeting">GOOD EVENING, OPERATIVE.</h1>
+        <p class="briefing__sub" id="briefingSub">Standing by for directives.</p>
+      </div>
+
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric__label">ACTIVE</div>
+          <div class="metric__value" id="metricActive">0</div>
+        </div>
+        <div class="metric metric--urgent">
+          <div class="metric__label">URGENT</div>
+          <div class="metric__value" id="metricUrgent">0</div>
+        </div>
+        <div class="metric">
+          <div class="metric__label">RESOLVED · 24H</div>
+          <div class="metric__value" id="metricResolved">0</div>
+        </div>
+        <div class="metric metric--ring">
+          <div class="metric__label">PROGRESS</div>
+          <div class="ring">
+            <svg viewBox="0 0 36 36" aria-hidden="true">
+              <circle cx="18" cy="18" r="15.9" class="ring__track"/>
+              <circle cx="18" cy="18" r="15.9" class="ring__fill" id="ringFill" pathLength="100" stroke-dasharray="0 100"/>
+            </svg>
+            <div class="ring__pct" id="ringPct">0%</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Filter / search bar -->
+  <section class="filterbar" id="filterbar" hidden>
+    <div class="filterbar__inner">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+        <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
+      </svg>
+      <input type="text" id="searchInput" placeholder="QUERY DIRECTIVES…" autocomplete="off" />
+      <button class="iconbtn iconbtn--ghost" id="searchClose" aria-label="Close search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+          <path d="M6 6l12 12M18 6L6 18"/>
+        </svg>
+      </button>
+    </div>
+  </section>
+
+  <!-- Main board: three priority columns -->
+  <main class="board" id="board">
+    <article class="column" data-tier="urgent">
+      <header class="column__head">
+        <div class="column__chip column__chip--urgent">PRIORITY · 01</div>
+        <h2 class="column__title">URGENT</h2>
+        <p class="column__sub">Immediate action required</p>
+        <div class="column__count" data-count="urgent">0</div>
+      </header>
+      <div class="column__list" data-list="urgent" role="list" aria-label="Urgent directives"></div>
+      <button class="addbtn" data-add="urgent">+ ADD DIRECTIVE</button>
+    </article>
+
+    <article class="column" data-tier="medium">
+      <header class="column__head">
+        <div class="column__chip column__chip--medium">PRIORITY · 02</div>
+        <h2 class="column__title">TO BE TAKEN CARE OF</h2>
+        <p class="column__sub">Ongoing assignments</p>
+        <div class="column__count" data-count="medium">0</div>
+      </header>
+      <div class="column__list" data-list="medium" role="list" aria-label="Medium priority directives"></div>
+      <button class="addbtn" data-add="medium">+ ADD DIRECTIVE</button>
+    </article>
+
+    <article class="column" data-tier="low">
+      <header class="column__head">
+        <div class="column__chip column__chip--low">PRIORITY · 03</div>
+        <h2 class="column__title">DO IN YOUR FREE TIME</h2>
+        <p class="column__sub">Unscheduled · low pressure</p>
+        <div class="column__count" data-count="low">0</div>
+      </header>
+      <div class="column__list" data-list="low" role="list" aria-label="Low priority directives"></div>
+      <button class="addbtn" data-add="low">+ ADD DIRECTIVE</button>
+    </article>
+  </main>
+
+  <!-- Floating new-directive button -->
+  <button class="fab" id="fab" aria-label="New directive" title="New directive (N)">
+    <span class="fab__plus" aria-hidden="true">+</span>
+    <span class="fab__label">NEW DIRECTIVE</span>
+  </button>
+
+  <!-- Toast layer -->
+  <div class="toast-layer" id="toastLayer" aria-live="polite"></div>
+
+  <!-- Mission complete overlay -->
+  <div class="mc" id="mc" aria-hidden="true">
+    <div class="mc__inner">
+      <div class="mc__brackets">
+        <span></span><span></span><span></span><span></span>
+      </div>
+      <div class="mc__label" id="mcLabel">MISSION COMPLETE</div>
+      <div class="mc__sub" id="mcSub">— · —</div>
+    </div>
+  </div>
+
+  <!-- Task editor modal -->
+  <div class="modal" id="taskModal" aria-hidden="true">
+    <div class="modal__backdrop" data-close></div>
+    <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <header class="modal__head">
+        <div class="modal__eyebrow">CLASSIFIED · DIRECTIVE</div>
+        <h3 class="modal__title" id="modalTitle">NEW DIRECTIVE</h3>
+        <button class="iconbtn iconbtn--ghost" data-close aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+
+      <div class="modal__body">
+        <label class="field">
+          <span class="field__label">CODENAME / TITLE</span>
+          <input type="text" id="fieldTitle" maxlength="120" placeholder="e.g. Prepare Q3 briefing for director" />
+        </label>
+
+        <label class="field">
+          <span class="field__label">OPERATIONAL NOTES</span>
+          <textarea id="fieldNotes" rows="3" maxlength="600" placeholder="Optional context, contacts, supporting intel…"></textarea>
+        </label>
+
+        <div class="field-grid">
+          <label class="field">
+            <span class="field__label">SCHEDULED</span>
+            <input type="datetime-local" id="fieldWhen" />
+          </label>
+
+          <div class="field">
+            <span class="field__label">PRIORITY TIER</span>
+            <div class="seg" id="fieldTier" role="radiogroup" aria-label="Priority tier">
+              <button type="button" class="seg__btn" data-tier="urgent" role="radio" aria-checked="false">
+                <span class="seg__dot seg__dot--urgent"></span>URGENT
+              </button>
+              <button type="button" class="seg__btn" data-tier="medium" role="radio" aria-checked="false">
+                <span class="seg__dot seg__dot--medium"></span>MEDIUM
+              </button>
+              <button type="button" class="seg__btn" data-tier="low" role="radio" aria-checked="false">
+                <span class="seg__dot seg__dot--low"></span>LOW
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <footer class="modal__foot">
+        <button class="btn btn--ghost" id="deleteBtn" hidden>DELETE</button>
+        <div class="modal__foot-right">
+          <button class="btn btn--ghost" data-close>CANCEL</button>
+          <button class="btn btn--primary" id="saveBtn">CONFIRM <span class="btn__kbd">⌘↵</span></button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Archive panel -->
+  <div class="sheet" id="archiveSheet" aria-hidden="true">
+    <div class="sheet__backdrop" data-close-sheet></div>
+    <aside class="sheet__panel" role="dialog" aria-modal="true" aria-labelledby="archiveTitle">
+      <header class="sheet__head">
+        <div class="sheet__eyebrow">VAULT · SECTION 7</div>
+        <h3 class="sheet__title" id="archiveTitle">INTEL ARCHIVE</h3>
+        <button class="iconbtn iconbtn--ghost" data-close-sheet aria-label="Close archive">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div class="sheet__body" id="archiveBody">
+        <p class="empty">No resolved directives yet.</p>
+      </div>
+      <footer class="sheet__foot">
+        <button class="btn btn--ghost" id="restoreAllBtn">RESTORE ALL</button>
+        <button class="btn btn--danger" id="purgeBtn">PURGE ARCHIVE</button>
+      </footer>
+    </aside>
+  </div>
+
+  <!-- Stats panel -->
+  <div class="sheet" id="statsSheet" aria-hidden="true">
+    <div class="sheet__backdrop" data-close-sheet></div>
+    <aside class="sheet__panel" role="dialog" aria-modal="true" aria-labelledby="statsTitle">
+      <header class="sheet__head">
+        <div class="sheet__eyebrow">DOSSIER · ANALYTICS</div>
+        <h3 class="sheet__title" id="statsTitle">FIELD PERFORMANCE</h3>
+        <button class="iconbtn iconbtn--ghost" data-close-sheet aria-label="Close analytics">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div class="sheet__body" id="statsBody"></div>
+    </aside>
+  </div>
+
+  <!-- Settings panel -->
+  <div class="sheet" id="settingsSheet" aria-hidden="true">
+    <div class="sheet__backdrop" data-close-sheet></div>
+    <aside class="sheet__panel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <header class="sheet__head">
+        <div class="sheet__eyebrow">SYSTEM · CONFIG</div>
+        <h3 class="sheet__title" id="settingsTitle">TERMINAL SETTINGS</h3>
+        <button class="iconbtn iconbtn--ghost" data-close-sheet aria-label="Close settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div class="sheet__body">
+        <div class="setting">
+          <div>
+            <div class="setting__title">OPERATIVE NAME</div>
+            <div class="setting__sub">Used in your daily briefing.</div>
+          </div>
+          <input type="text" id="setName" maxlength="40" placeholder="e.g. AGENT 7" />
+        </div>
+
+        <div class="setting">
+          <div>
+            <div class="setting__title">INTERFACE AUDIO</div>
+            <div class="setting__sub">Subtle confirmation tones on key actions.</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setSound" />
+            <span class="switch__track"><span class="switch__thumb"></span></span>
+          </label>
+        </div>
+
+        <div class="setting">
+          <div>
+            <div class="setting__title">SCANLINE OVERLAY</div>
+            <div class="setting__sub">Faint cinematic raster on the terminal.</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setScan" />
+            <span class="switch__track"><span class="switch__thumb"></span></span>
+          </label>
+        </div>
+
+        <div class="setting">
+          <div>
+            <div class="setting__title">FOCUS MODE</div>
+            <div class="setting__sub">Hides medium and low tiers. Press <code>F</code>.</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setFocus" />
+            <span class="switch__track"><span class="switch__thumb"></span></span>
+          </label>
+        </div>
+
+        <div class="setting setting--keys">
+          <div class="setting__title">KEYBOARD</div>
+          <div class="kbds">
+            <div><kbd>N</kbd><span>New directive</span></div>
+            <div><kbd>/</kbd><span>Search</span></div>
+            <div><kbd>F</kbd><span>Focus mode</span></div>
+            <div><kbd>A</kbd><span>Archive</span></div>
+            <div><kbd>Esc</kbd><span>Close panel</span></div>
+            <div><kbd>⌘</kbd><kbd>↵</kbd><span>Save directive</span></div>
+          </div>
+        </div>
+
+        <div class="setting setting--danger">
+          <div>
+            <div class="setting__title">EXPORT / IMPORT</div>
+            <div class="setting__sub">Encrypted JSON file. Local only.</div>
+          </div>
+          <div class="setting__actions">
+            <button class="btn btn--ghost" id="exportBtn">EXPORT</button>
+            <button class="btn btn--ghost" id="importBtn">IMPORT</button>
+            <input type="file" id="importInput" accept="application/json" hidden />
+          </div>
+        </div>
+
+        <div class="setting setting--danger">
+          <div>
+            <div class="setting__title">WIPE TERMINAL</div>
+            <div class="setting__sub">Permanently erases all directives, archive, and settings.</div>
+          </div>
+          <button class="btn btn--danger" id="wipeBtn">WIPE</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
