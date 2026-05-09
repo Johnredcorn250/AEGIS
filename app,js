@@ -11,16 +11,8 @@
   const SETTINGS_KEY = 'aegis.v1.settings';
 
   // ---------- State ----------
-  const defaultState = {
-    tasks: [],
-  };
-
-  const defaultSettings = {
-    name: '',
-    sound: false,
-    scanline: true,
-    focus: false,
-  };
+  const defaultState = { tasks: [] };
+  const defaultSettings = { name: '', sound: false, scanline: true, focus: false };
 
   let state = loadState();
   let settings = loadSettings();
@@ -28,126 +20,85 @@
   function loadState() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return structuredClone(defaultState);
-      return JSON.parse(raw);
-    } catch {
-      return structuredClone(defaultState);
-    }
+      return raw ? JSON.parse(raw) : structuredClone(defaultState);
+    } catch { return structuredClone(defaultState); }
   }
 
-  function saveState() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }
+  function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
 
   function loadSettings() {
     try {
       const raw = localStorage.getItem(SETTINGS_KEY);
-      if (!raw) return { ...defaultSettings };
-      return { ...defaultSettings, ...JSON.parse(raw) };
-    } catch {
-      return { ...defaultSettings };
-    }
+      return raw ? { ...defaultSettings, ...JSON.parse(raw) } : { ...defaultSettings };
+    } catch { return { ...defaultSettings }; }
   }
 
-  function saveSettings() {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-  }
+  function saveSettings() { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); }
 
-  function uid() {
-    return 'tsk_' + Math.random().toString(36).slice(2, 10);
-  }
-
-  function nowISO() {
-    return new Date().toISOString();
-  }
-
-  function $(sel, root = document) {
-    return root.querySelector(sel);
-  }
+  function $ (sel) { return document.querySelector(sel); }
 
   /**
-   * EMERGENCY OVERRIDE SETUP
-   * This physically removes the boot screen from the DOM.
+   * EMERGENCY BOOT REMOVAL
+   * Physically deletes the overlay from the DOM after 2 seconds.
    */
   function setup() {
-    console.log('AEGIS: System override initiated...');
-    
     const bootOverlay = document.getElementById('boot');
     const bootStatus = document.getElementById('bootStatus');
 
-    // 1. Visual confirmation
-    setTimeout(() => {
-      if (bootStatus) bootStatus.textContent = "DECRYPTING COMMAND INTERFACE...";
-    }, 600);
+    console.log("AEGIS: Booting...");
 
-    // 2. Physical Removal
+    // Update status for visual feedback
+    setTimeout(() => {
+      if (bootStatus) bootStatus.textContent = "ESTABLISHING SECURE CONNECTION...";
+    }, 700);
+
+    // Final purge
     setTimeout(() => {
       if (bootStatus) bootStatus.textContent = "ACCESS GRANTED.";
       
       if (bootOverlay) {
-        // Fade out for polish
-        bootOverlay.style.transition = 'opacity 0.5s ease';
         bootOverlay.style.opacity = '0';
         bootOverlay.style.pointerEvents = 'none';
         
-        // The "Kill" command: Physically deletes the overlay so it cannot block you
+        // Remove the element completely after the fade
         setTimeout(() => {
           bootOverlay.remove();
-          console.log('AEGIS: Boot screen purged. Terminal active.');
-        }, 500);
+          console.log("AEGIS: Boot screen purged.");
+        }, 600);
       }
-    }, 1800);
+    }, 2000);
   }
 
   function seedIfEmpty() {
     if (state.tasks.length > 0) return;
-
-    const now = new Date();
-    const in2h = new Date(now.getTime() + 2 * 3600 * 1000).toISOString();
-
-    state.tasks = [
-      {
-        id: uid(),
-        title: 'Review classified field report',
-        notes: 'Cross-reference before briefing.',
-        tier: 'urgent',
-        when: in2h,
-        completed: false,
-        completedAt: null,
-        createdAt: nowISO(),
-        order: 0
-      }
-    ];
-
+    state.tasks = [{
+      id: 'tsk_' + Math.random().toString(36).slice(2, 10),
+      title: 'Review classified field report',
+      notes: 'Cross-reference before briefing.',
+      tier: 'urgent',
+      when: new Date(Date.now() + 7200000).toISOString(),
+      completed: false,
+      completedAt: null,
+      createdAt: new Date().toISOString(),
+      order: 0
+    }];
     saveState();
   }
 
-  // Ensure initialization only happens when DOM is fully ready
+  // Handle both refresh and cold start
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      seedIfEmpty();
-      setup();
-    });
+    document.addEventListener('DOMContentLoaded', () => { seedIfEmpty(); setup(); });
   } else {
-    seedIfEmpty();
+    seedIfEmpty(); 
     setup();
   }
-
 })();
 
-/**
- * Service Worker Registration 
- * (Ensuring we use the new version logic)
- */
+// SW registration
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./service-worker.js')
-      .then(reg => {
-        // If there's a new SW waiting, force it to activate
-        if (reg.waiting) {
-          reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-        }
-      })
-      .catch(err => console.error('SW registration failed:', err));
+      .then(reg => { if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' }); })
+      .catch(err => console.error('SW Error:', err));
   });
 }
