@@ -65,31 +65,42 @@
     return root.querySelector(sel);
   }
 
-  // --- NEW: Added logic to clear the boot screen ---
+  /**
+   * Main setup sequence.
+   * Handles the transition from the boot overlay to the main interface.
+   */
   function setup() {
+    console.log('AEGIS: Initiating boot sequence...');
+    
     const bootOverlay = $('#boot');
     const bootStatus = $('#bootStatus');
 
-    // Simulate terminal loading sequence
+    // 1. Update status for atmosphere
     setTimeout(() => {
       if (bootStatus) bootStatus.textContent = "ESTABLISHING SECURE CONNECTION...";
-    }, 800);
+    }, 600);
 
+    // 2. Finalize and reveal UI
     setTimeout(() => {
       if (bootStatus) bootStatus.textContent = "ACCESS GRANTED.";
       
-      // Fade out and remove the boot overlay
       if (bootOverlay) {
-        bootOverlay.style.transition = 'opacity 0.5s ease';
+        // Apply fade-out
+        bootOverlay.style.transition = 'opacity 0.6s ease, visibility 0.6s';
         bootOverlay.style.opacity = '0';
+        bootOverlay.style.pointerEvents = 'none'; // Ensure user can click through during fade
+        
+        // Remove from DOM flow after fade
         setTimeout(() => {
           bootOverlay.style.display = 'none';
           bootOverlay.setAttribute('aria-hidden', 'true');
-        }, 500);
+          console.log('AEGIS: System Ready.');
+        }, 600);
       }
-    }, 1800);
+    }, 1500);
 
-    console.log('AEGIS initialized successfully');
+    // Placeholder for additional UI initialization logic
+    // (e.g., rendering tasks, starting clocks)
   }
 
   function seedIfEmpty() {
@@ -115,6 +126,7 @@
     saveState();
   }
 
+  // Initialization
   document.addEventListener('DOMContentLoaded', () => {
     seedIfEmpty();
     setup();
@@ -122,10 +134,13 @@
 
 })();
 
-// Correct service worker registration
+/**
+ * Service Worker Registration
+ */
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./service-worker.js')
+      .then(reg => console.log('SW registered:', reg.scope))
       .catch(err => console.error('SW registration failed:', err));
   });
 }
