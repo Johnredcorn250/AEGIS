@@ -1,3 +1,4 @@
+/* =========================================================
    AEGIS — Operations Command
    Application logic
    ========================================================= */
@@ -64,14 +65,31 @@
     return root.querySelector(sel);
   }
 
+  // --- NEW: Added logic to clear the boot screen ---
   function setup() {
+    const bootOverlay = $('#boot');
+    const bootStatus = $('#bootStatus');
+
+    // Simulate terminal loading sequence
+    setTimeout(() => {
+      if (bootStatus) bootStatus.textContent = "ESTABLISHING SECURE CONNECTION...";
+    }, 800);
+
+    setTimeout(() => {
+      if (bootStatus) bootStatus.textContent = "ACCESS GRANTED.";
+      
+      // Fade out and remove the boot overlay
+      if (bootOverlay) {
+        bootOverlay.style.transition = 'opacity 0.5s ease';
+        bootOverlay.style.opacity = '0';
+        setTimeout(() => {
+          bootOverlay.style.display = 'none';
+          bootOverlay.setAttribute('aria-hidden', 'true');
+        }, 500);
+      }
+    }, 1800);
+
     console.log('AEGIS initialized successfully');
-
-    // IMPORTANT:
-    // Removed broken duplicate service worker registration:
-    // navigator.serviceWorker.register('sw.js')
-
-    // Keep all your existing setup logic here.
   }
 
   function seedIfEmpty() {
@@ -111,9 +129,3 @@ if ('serviceWorker' in navigator) {
       .catch(err => console.error('SW registration failed:', err));
   });
 }
-"""
-
-path = Path("/mnt/data/fixed-app.js")
-path.write_text(js_content, encoding="utf-8")
-
-print(f"Fixed app.js saved to: {path}")
