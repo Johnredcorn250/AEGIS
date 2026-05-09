@@ -66,38 +66,37 @@
   }
 
   /**
-   * Main setup sequence.
-   * Forces the boot overlay to disappear after initialization.
+   * EMERGENCY OVERRIDE SETUP
+   * This physically removes the boot screen from the DOM.
    */
   function setup() {
-    const bootOverlay = $('#boot');
-    const bootStatus = $('#bootStatus');
+    console.log('AEGIS: System override initiated...');
+    
+    const bootOverlay = document.getElementById('boot');
+    const bootStatus = document.getElementById('bootStatus');
 
-    console.log('AEGIS: System Initializing...');
-
-    // 1. Update status text for visual feedback
+    // 1. Visual confirmation
     setTimeout(() => {
-      if (bootStatus) bootStatus.textContent = "ESTABLISHING SECURE CONNECTION...";
-    }, 800);
+      if (bootStatus) bootStatus.textContent = "DECRYPTING COMMAND INTERFACE...";
+    }, 600);
 
-    // 2. Clear the boot screen to reveal the app
+    // 2. Physical Removal
     setTimeout(() => {
       if (bootStatus) bootStatus.textContent = "ACCESS GRANTED.";
       
       if (bootOverlay) {
-        // Apply fade out styles
-        bootOverlay.style.transition = 'opacity 0.8s ease, visibility 0.8s';
+        // Fade out for polish
+        bootOverlay.style.transition = 'opacity 0.5s ease';
         bootOverlay.style.opacity = '0';
-        bootOverlay.style.pointerEvents = 'none'; // Prevents the invisible div from blocking clicks
+        bootOverlay.style.pointerEvents = 'none';
         
-        // Fully remove from layout after fade
+        // The "Kill" command: Physically deletes the overlay so it cannot block you
         setTimeout(() => {
-          bootOverlay.style.display = 'none';
-          bootOverlay.setAttribute('aria-hidden', 'true');
-          console.log('AEGIS: Terminal Ready.');
-        }, 800);
+          bootOverlay.remove();
+          console.log('AEGIS: Boot screen purged. Terminal active.');
+        }, 500);
       }
-    }, 2000);
+    }, 1800);
   }
 
   function seedIfEmpty() {
@@ -123,18 +122,32 @@
     saveState();
   }
 
-  // Initialization trigger
-  document.addEventListener('DOMContentLoaded', () => {
+  // Ensure initialization only happens when DOM is fully ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      seedIfEmpty();
+      setup();
+    });
+  } else {
     seedIfEmpty();
     setup();
-  });
+  }
 
 })();
 
-// Correct service worker registration
+/**
+ * Service Worker Registration 
+ * (Ensuring we use the new version logic)
+ */
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./service-worker.js')
+      .then(reg => {
+        // If there's a new SW waiting, force it to activate
+        if (reg.waiting) {
+          reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+        }
+      })
       .catch(err => console.error('SW registration failed:', err));
   });
 }
