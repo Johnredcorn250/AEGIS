@@ -1,0 +1,965 @@
+/* =========================================================
+   AEGIS — Operations Command
+   Application logic
+   ========================================================= */
+
+(() => {
+  'use strict';
+
+  // ---------- Storage keys ----------
+  const STORAGE_KEY = 'aegis.v1.state';
+  const SETTINGS_KEY = 'aegis.v1.settings';
+
+  // ---------- State ----------
+  const defaultState = {
+    tasks: [],          // active + completed (archived = completed)
+  };
+  const defaultSettings = {
+    name: '',
+    sound: false,
+    scanline: true,
+    focus: false,
+  };
+
+  let state = loadState();
+  let settings = loadSettings();
+  let editingId = null;          // id when editing existing task
+  let pendingTier = 'urgent';    // tier in modal
+  let dragId = null;             // task id being dragged
+  let dragSourceTier = null;
+  let touchDrag = null;          // { id, ghost, startY, ... }
+
+  // ---------- Utilities ----------
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return structuredClone(defaultState);
+      const parsed = JSON.parse(raw);
+      if (!parsed || !Array.isArray(parsed.tasks)) return structuredClone(defaultState);
+      return parsed;
+    } catch { return structuredClone(defaultState); }
+  }
+  function saveState() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
+  }
+  function loadSettings() {
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (!raw) return { ...defaultSettings };
+      return { ...defaultSettings, ...JSON.parse(raw) };
+    } catch { return { ...defaultSettings }; }
+  }
+  function saveSettings() {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {}
+  }
+
+  function uid() { return 'tsk_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-3); }
+  function nowISO() { return new Date().toISOString(); }
+  function $(sel, root = document) { return root.querySelector(sel); }
+  function $$(sel, root = document) { return Array.from(root.querySelectorAll(sel)); }
+
+  function pad2(n) { return String(n).padStart(2, '0'); }
+
+  function formatTime(d) { return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`; }
+  function formatDate(d) {
+    const m = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+    return `${pad2(d.getDate())} ${m[d.getMonth()]} ${d.getFullYear()}`;
+  }
+  function greeting(d, name) {
+    const h = d.getHours();
+    let g;
+    if (h < 5) g = 'STILL ON DUTY';
+    else if (h < 12) g = 'GOOD MORNING';
+    else if (h < 17) g = 'GOOD AFTERNOON';
+    else if (h < 22) g = 'GOOD EVENING';
+    else g = 'OPERATING LATE';
+    const who = (name && name.trim()) ? name.trim().toUpperCase() : 'OPERATIVE';
+    return `${g}, ${who}.`;
+  }
+
+  function relativeWhen(iso) {
+    if (!iso) return null;
+    const target = new Date(iso);
+    if (isNaN(target)) return null;
+    const now = new Date();
+    const diff = target - now;
+    const absMin = Math.round(Math.abs(diff) / 60000);
+    const sameDay = target.toDateString() === now.toDateString();
+    const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
+    const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
+
+    let label;
+    if (sameDay) {
+      label = `TODAY · ${pad2(target.getHours())}:${pad2(target.getMinutes())}`;
+    } else if (target.toDateString() === tomorrow.toDateString()) {
+      label = `TOMORROW · ${pad2(target.getHours())}:${pad2(target.getMinutes())}`;
+    } else if (target.toDateString() === yesterday.toDateString()) {
+      label = `YESTERDAY · ${pad2(target.getHours())}:${pad2(target.getMinutes())}`;
+    } else {
+      label = `${formatDate(target)} · ${pad2(target.getHours())}:${pad2(target.getMinutes())}`;
+    }
+
+    let modifier = '';
+    if (diff < 0) modifier = 'overdue';
+    else if (absMin <= 60) modifier = 'soon';
+    return { label, modifier };
+  }
+
+  // ---------- Audio (very subtle) ----------
+  let audioCtx = null;
+  function tone(freq = 880, dur = 0.06, type = 'sine', vol = 0.04) {
+    if (!settings.sound) return;
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = type; o.frequency.value = freq;
+      g.gain.value = 0;
+      o.connect(g); g.connect(audioCtx.destination);
+      const t = audioCtx.currentTime;
+      g.gain.linearRampToValueAtTime(vol, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.start(t); o.stop(t + dur + 0.02);
+    } catch {}
+  }
+  const sfx = {
+    tap:    () => tone(1100, 0.04, 'sine', 0.025),
+    open:   () => { tone(620, 0.05, 'sine', 0.03); setTimeout(() => tone(880, 0.06, 'sine', 0.025), 50); },
+    save:   () => { tone(740, 0.05, 'sine', 0.03); setTimeout(() => tone(1100, 0.07, 'sine', 0.03), 60); },
+    done:   () => { tone(880, 0.07, 'sine', 0.04); setTimeout(() => tone(1320, 0.1, 'sine', 0.035), 80); },
+    delete: () => tone(220, 0.08, 'sawtooth', 0.025),
+  };
+
+  // ---------- Boot ----------
+  function runBoot() {
+    const boot = $('#boot');
+    const status = $('#bootStatus');
+    const lines = [
+      'INITIALIZING SECURE TERMINAL…',
+      'AUTHENTICATING OPERATIVE…',
+      'LOADING DIRECTIVES…',
+      'CHANNEL ENCRYPTED · GO',
+    ];
+    let i = 0;
+    status.textContent = lines[0];
+    const t = setInterval(() => {
+      i++;
+      if (i >= lines.length) { clearInterval(t); return; }
+      status.textContent = lines[i];
+    }, 380);
+    setTimeout(() => {
+      boot.classList.add('boot--gone');
+      setTimeout(() => boot.remove(), 800);
+    }, 1700);
+  }
+
+  // ---------- Time loop ----------
+  function tickClock() {
+    const now = new Date();
+    $('#hudTime').textContent = formatTime(now);
+    $('#hudDate').textContent = formatDate(now);
+    $('#greeting').textContent = greeting(now, settings.name);
+    requestAnimationFrame(() => setTimeout(tickClock, 1000));
+  }
+
+  // ---------- Rendering ----------
+  function activeTasks() { return state.tasks.filter(t => !t.completed); }
+  function archivedTasks() { return state.tasks.filter(t => t.completed); }
+  function tasksByTier(tier) {
+    return activeTasks()
+      .filter(t => t.tier === tier)
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  }
+
+  function renderAll() {
+    renderColumns();
+    renderMetrics();
+    renderBriefingSub();
+  }
+
+  function renderBriefingSub() {
+    const a = activeTasks();
+    const u = a.filter(t => t.tier === 'urgent').length;
+    const sub = $('#briefingSub');
+    if (!a.length) {
+      sub.textContent = 'NO ACTIVE DIRECTIVES · STAND DOWN.';
+    } else if (u > 0) {
+      sub.textContent = `${u} URGENT ${u === 1 ? 'DIRECTIVE' : 'DIRECTIVES'} REQUIRE ATTENTION.`;
+    } else {
+      sub.textContent = `${a.length} ACTIVE ${a.length === 1 ? 'DIRECTIVE' : 'DIRECTIVES'} ON FILE.`;
+    }
+  }
+
+  function renderMetrics() {
+    const a = activeTasks();
+    const allTasks = state.tasks;
+    $('#metricActive').textContent = a.length;
+    $('#metricUrgent').textContent = a.filter(t => t.tier === 'urgent').length;
+
+    const dayAgo = Date.now() - 24 * 3600 * 1000;
+    const resolved24 = allTasks.filter(t => t.completed && t.completedAt && new Date(t.completedAt).getTime() > dayAgo).length;
+    $('#metricResolved').textContent = resolved24;
+
+    // Today's progress: completed today / (active + completed today)
+    const todayStr = new Date().toDateString();
+    const completedToday = allTasks.filter(t => t.completed && t.completedAt && new Date(t.completedAt).toDateString() === todayStr).length;
+    const total = a.length + completedToday;
+    const pct = total === 0 ? 0 : Math.round((completedToday / total) * 100);
+    $('#ringPct').textContent = `${pct}%`;
+    $('#ringFill').setAttribute('stroke-dasharray', `${pct} ${100 - pct}`);
+  }
+
+  function renderColumns() {
+    ['urgent', 'medium', 'low'].forEach(tier => {
+      const list = $(`[data-list="${tier}"]`);
+      const items = tasksByTier(tier);
+      list.innerHTML = '';
+      items.forEach(t => list.appendChild(renderCard(t)));
+      $(`[data-count="${tier}"]`).textContent = items.length;
+    });
+  }
+
+  function renderCard(t) {
+    const card = document.createElement('div');
+    card.className = 'task' + (t.completed ? ' is-complete' : '');
+    card.dataset.id = t.id;
+    card.dataset.tier = t.tier;
+    card.setAttribute('role', 'listitem');
+    card.draggable = true;
+
+    const when = relativeWhen(t.when);
+
+    card.innerHTML = `
+      <div class="task__row">
+        <button class="task__check" aria-label="Toggle complete"></button>
+        <div class="task__main">
+          <div class="task__title"></div>
+          ${when ? `
+            <div class="task__meta">
+              <span class="task__time ${when.modifier ? 'task__time--' + when.modifier : ''}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                ${when.label}
+              </span>
+            </div>` : ''}
+          ${t.notes ? `<p class="task__notes"></p>` : ''}
+        </div>
+        <button class="task__edit" aria-label="Edit directive">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 113 3L7 19l-4 1 1-4z"/></svg>
+        </button>
+      </div>
+    `;
+    // Safe text injection
+    card.querySelector('.task__title').textContent = t.title || '(UNTITLED DIRECTIVE)';
+    if (t.notes) card.querySelector('.task__notes').textContent = t.notes;
+
+    // Toggle expand on title click
+    const main = card.querySelector('.task__main');
+    main.addEventListener('click', (e) => {
+      if (e.target.closest('button')) return;
+      if (t.notes) card.classList.toggle('is-open');
+    });
+
+    // Check button
+    card.querySelector('.task__check').addEventListener('click', (e) => {
+      e.stopPropagation();
+      completeTask(t.id);
+    });
+
+    // Edit button
+    card.querySelector('.task__edit').addEventListener('click', (e) => {
+      e.stopPropagation();
+      openEditModal(t.id);
+    });
+
+    // Drag events (desktop)
+    card.addEventListener('dragstart', (e) => {
+      dragId = t.id; dragSourceTier = t.tier;
+      card.classList.add('is-dragging');
+      try { e.dataTransfer.setData('text/plain', t.id); e.dataTransfer.effectAllowed = 'move'; } catch {}
+    });
+    card.addEventListener('dragend', () => {
+      card.classList.remove('is-dragging');
+      $$('.column').forEach(c => c.classList.remove('is-drag-over'));
+      dragId = null; dragSourceTier = null;
+    });
+
+    // Touch drag (mobile)
+    card.addEventListener('touchstart', onTouchStart, { passive: true });
+
+    return card;
+  }
+
+  // ---------- Drag & drop (desktop) ----------
+  function setupDnD() {
+    $$('.column').forEach(col => {
+      col.addEventListener('dragover', (e) => {
+        if (!dragId) return;
+        e.preventDefault();
+        col.classList.add('is-drag-over');
+      });
+      col.addEventListener('dragleave', (e) => {
+        if (e.target === col) col.classList.remove('is-drag-over');
+      });
+      col.addEventListener('drop', (e) => {
+        e.preventDefault();
+        col.classList.remove('is-drag-over');
+        const id = dragId || e.dataTransfer.getData('text/plain');
+        if (!id) return;
+        const newTier = col.dataset.tier;
+
+        // Determine drop position by Y
+        const list = col.querySelector('.column__list');
+        const after = getDropAfterElement(list, e.clientY);
+        moveTask(id, newTier, after?.dataset.id || null);
+      });
+    });
+  }
+  function getDropAfterElement(list, y) {
+    const cards = $$('.task:not(.is-dragging)', list);
+    let closest = { offset: Number.NEGATIVE_INFINITY, el: null };
+    cards.forEach(el => {
+      const box = el.getBoundingClientRect();
+      const offset = y - box.top - box.height / 2;
+      if (offset < 0 && offset > closest.offset) closest = { offset, el };
+    });
+    return closest.el;
+  }
+
+  // ---------- Drag & drop (touch) ----------
+  function onTouchStart(e) {
+    const card = e.currentTarget;
+    const id = card.dataset.id;
+    const t = state.tasks.find(x => x.id === id);
+    if (!t) return;
+    const touch = e.touches[0];
+    touchDrag = {
+      id,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      moved: false,
+      ghost: null,
+      offsetX: 0,
+      offsetY: 0,
+      sourceCard: card,
+    };
+    card.addEventListener('touchmove', onTouchMove, { passive: false });
+    card.addEventListener('touchend', onTouchEnd);
+    card.addEventListener('touchcancel', onTouchEnd);
+  }
+  function onTouchMove(e) {
+    if (!touchDrag) return;
+    const touch = e.touches[0];
+    const dx = touch.clientX - touchDrag.startX;
+    const dy = touch.clientY - touchDrag.startY;
+    if (!touchDrag.moved) {
+      if (Math.hypot(dx, dy) < 8) return;
+      // begin drag
+      touchDrag.moved = true;
+      const rect = touchDrag.sourceCard.getBoundingClientRect();
+      const ghost = touchDrag.sourceCard.cloneNode(true);
+      ghost.style.position = 'fixed';
+      ghost.style.zIndex = '90';
+      ghost.style.left = rect.left + 'px';
+      ghost.style.top = rect.top + 'px';
+      ghost.style.width = rect.width + 'px';
+      ghost.style.pointerEvents = 'none';
+      ghost.style.transform = 'scale(1.02)';
+      ghost.style.boxShadow = '0 20px 50px rgba(0,0,0,0.6)';
+      ghost.style.opacity = '0.95';
+      document.body.appendChild(ghost);
+      touchDrag.ghost = ghost;
+      touchDrag.offsetX = touch.clientX - rect.left;
+      touchDrag.offsetY = touch.clientY - rect.top;
+      touchDrag.sourceCard.classList.add('is-dragging');
+      dragId = touchDrag.id;
+    }
+    e.preventDefault();
+    if (touchDrag.ghost) {
+      touchDrag.ghost.style.left = (touch.clientX - touchDrag.offsetX) + 'px';
+      touchDrag.ghost.style.top = (touch.clientY - touchDrag.offsetY) + 'px';
+    }
+    // highlight target column
+    const el = document.elementFromPoint(touch.clientX, touch.clientY);
+    const col = el?.closest('.column');
+    $$('.column').forEach(c => c.classList.toggle('is-drag-over', c === col));
+  }
+  function onTouchEnd(e) {
+    if (!touchDrag) return;
+    const card = touchDrag.sourceCard;
+    card.removeEventListener('touchmove', onTouchMove);
+    card.removeEventListener('touchend', onTouchEnd);
+    card.removeEventListener('touchcancel', onTouchEnd);
+
+    if (touchDrag.moved) {
+      const t = e.changedTouches[0];
+      const el = document.elementFromPoint(t.clientX, t.clientY);
+      const col = el?.closest('.column');
+      if (col) {
+        const list = col.querySelector('.column__list');
+        const after = getDropAfterElement(list, t.clientY);
+        moveTask(touchDrag.id, col.dataset.tier, after?.dataset.id || null);
+      }
+      if (touchDrag.ghost) touchDrag.ghost.remove();
+    }
+    card.classList.remove('is-dragging');
+    $$('.column').forEach(c => c.classList.remove('is-drag-over'));
+    dragId = null;
+    touchDrag = null;
+  }
+
+  function moveTask(id, newTier, beforeId) {
+    const t = state.tasks.find(x => x.id === id);
+    if (!t) return;
+    t.tier = newTier;
+
+    // Re-sequence: gather active tasks of that tier (excluding this one), insert at right position
+    const siblings = activeTasks().filter(x => x.tier === newTier && x.id !== id)
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+    let insertIdx = siblings.length;
+    if (beforeId) {
+      const i = siblings.findIndex(x => x.id === beforeId);
+      if (i >= 0) insertIdx = i;
+    }
+    siblings.splice(insertIdx, 0, t);
+    siblings.forEach((x, i) => { x.order = i; });
+
+    saveState();
+    renderAll();
+    sfx.tap();
+  }
+
+  // ---------- Task ops ----------
+  function createTask({ title, notes, tier, when }) {
+    const order = tasksByTier(tier).length;
+    const t = {
+      id: uid(),
+      title: title.trim(),
+      notes: (notes || '').trim(),
+      tier,
+      when: when || null,
+      completed: false,
+      completedAt: null,
+      createdAt: nowISO(),
+      order,
+    };
+    state.tasks.push(t);
+    saveState();
+    renderAll();
+    sfx.save();
+    showToast('DIRECTIVE LOGGED', 'gold');
+  }
+  function updateTask(id, patch) {
+    const t = state.tasks.find(x => x.id === id);
+    if (!t) return;
+    if (patch.tier && patch.tier !== t.tier) {
+      // moving tiers — append to end of new tier
+      t.order = tasksByTier(patch.tier).length;
+    }
+    Object.assign(t, patch);
+    saveState();
+    renderAll();
+    sfx.save();
+  }
+  function deleteTask(id) {
+    const card = document.querySelector(`.task[data-id="${id}"]`);
+    if (card) card.classList.add('is-removing');
+    setTimeout(() => {
+      state.tasks = state.tasks.filter(x => x.id !== id);
+      saveState();
+      renderAll();
+    }, 350);
+    sfx.delete();
+    showToast('DIRECTIVE PURGED');
+  }
+  function completeTask(id) {
+    const t = state.tasks.find(x => x.id === id);
+    if (!t || t.completed) return;
+    const card = document.querySelector(`.task[data-id="${id}"]`);
+    if (card) card.classList.add('is-removing');
+    t.completed = true;
+    t.completedAt = nowISO();
+    sfx.done();
+    playMissionComplete(t.title);
+
+    setTimeout(() => {
+      saveState();
+      renderAll();
+    }, 350);
+  }
+
+  function restoreTask(id) {
+    const t = state.tasks.find(x => x.id === id);
+    if (!t) return;
+    t.completed = false;
+    t.completedAt = null;
+    t.order = tasksByTier(t.tier).length;
+    saveState();
+    renderAll();
+    renderArchive();
+    showToast('DIRECTIVE REINSTATED', 'gold');
+  }
+
+  function purgeArchive() {
+    if (!confirm('Permanently delete all archived directives?')) return;
+    state.tasks = state.tasks.filter(t => !t.completed);
+    saveState();
+    renderAll();
+    renderArchive();
+    showToast('ARCHIVE PURGED');
+  }
+
+  // ---------- Mission complete cinematic ----------
+  function playMissionComplete(title) {
+    const phrases = [
+      ['MISSION COMPLETE',  'OBJECTIVE SECURED'],
+      ['OBJECTIVE SECURED', 'TARGET RESOLVED'],
+      ['TARGET RESOLVED',   'CASE CLOSED'],
+      ['STATUS · CLEARED',  'WELL EXECUTED'],
+    ];
+    const pick = phrases[Math.floor(Math.random() * phrases.length)];
+    const mc = $('#mc');
+    $('#mcLabel').textContent = pick[0];
+    $('#mcSub').textContent = title ? title.toUpperCase().slice(0, 60) : pick[1];
+    mc.classList.remove('is-on');
+    void mc.offsetWidth;
+    mc.classList.add('is-on');
+    setTimeout(() => mc.classList.remove('is-on'), 1500);
+  }
+
+  // ---------- Toasts ----------
+  function showToast(msg, variant = '') {
+    const el = document.createElement('div');
+    el.className = 'toast' + (variant ? ' toast--' + variant : '');
+    el.textContent = msg;
+    $('#toastLayer').appendChild(el);
+    setTimeout(() => el.remove(), 2000);
+  }
+
+  // ---------- Modal (task editor) ----------
+  function openCreateModal(tier = 'urgent') {
+    editingId = null;
+    pendingTier = tier;
+    $('#modalTitle').textContent = 'NEW DIRECTIVE';
+    $('#fieldTitle').value = '';
+    $('#fieldNotes').value = '';
+    $('#fieldWhen').value = '';
+    $('#deleteBtn').hidden = true;
+    setSegTier(tier);
+    showModal();
+    setTimeout(() => $('#fieldTitle').focus(), 60);
+    sfx.open();
+  }
+  function openEditModal(id) {
+    const t = state.tasks.find(x => x.id === id);
+    if (!t) return;
+    editingId = id;
+    pendingTier = t.tier;
+    $('#modalTitle').textContent = 'EDIT DIRECTIVE';
+    $('#fieldTitle').value = t.title;
+    $('#fieldNotes').value = t.notes || '';
+    $('#fieldWhen').value = t.when ? toLocalInput(t.when) : '';
+    $('#deleteBtn').hidden = false;
+    setSegTier(t.tier);
+    showModal();
+    setTimeout(() => $('#fieldTitle').focus(), 60);
+    sfx.open();
+  }
+  function showModal() { $('#taskModal').classList.add('is-on'); document.body.style.overflow = 'hidden'; }
+  function hideModal() { $('#taskModal').classList.remove('is-on'); document.body.style.overflow = ''; editingId = null; }
+
+  function setSegTier(tier) {
+    pendingTier = tier;
+    $$('#fieldTier .seg__btn').forEach(b => {
+      const on = b.dataset.tier === tier;
+      b.classList.toggle('is-on', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+  }
+  function toLocalInput(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 16);
+  }
+  function fromLocalInput(value) {
+    if (!value) return null;
+    const d = new Date(value);
+    if (isNaN(d)) return null;
+    return d.toISOString();
+  }
+
+  function commitModal() {
+    const title = $('#fieldTitle').value.trim();
+    if (!title) {
+      $('#fieldTitle').focus();
+      $('#fieldTitle').style.borderColor = 'rgba(208,74,74,0.6)';
+      setTimeout(() => $('#fieldTitle').style.borderColor = '', 1200);
+      return;
+    }
+    const notes = $('#fieldNotes').value.trim();
+    const when = fromLocalInput($('#fieldWhen').value);
+    const tier = pendingTier;
+
+    if (editingId) {
+      updateTask(editingId, { title, notes, when, tier });
+    } else {
+      createTask({ title, notes, when, tier });
+    }
+    hideModal();
+  }
+
+  // ---------- Side sheets (archive, stats, settings) ----------
+  function openSheet(id) {
+    closeAllSheets();
+    $('#' + id).classList.add('is-on');
+    document.body.style.overflow = 'hidden';
+    sfx.open();
+  }
+  function closeAllSheets() {
+    $$('.sheet').forEach(s => s.classList.remove('is-on'));
+    document.body.style.overflow = '';
+  }
+
+  function renderArchive() {
+    const body = $('#archiveBody');
+    const items = archivedTasks().sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''));
+    if (!items.length) {
+      body.innerHTML = '<p class="empty">No resolved directives yet.</p>';
+      return;
+    }
+    body.innerHTML = '';
+    items.forEach(t => {
+      const row = document.createElement('div');
+      row.className = 'archive-item';
+      const d = t.completedAt ? new Date(t.completedAt) : null;
+      row.innerHTML = `
+        <span class="archive-item__title"></span>
+        <span class="archive-item__date">${d ? formatDate(d).replace(/^\d+ /, m => m + ' ') + ' · ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) : ''}</span>
+        <button class="archive-item__action" data-restore aria-label="Restore" title="Restore">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+        </button>
+        <button class="archive-item__action" data-erase aria-label="Erase" title="Erase">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
+        </button>
+      `;
+      row.querySelector('.archive-item__title').textContent = t.title;
+      row.querySelector('[data-restore]').addEventListener('click', () => restoreTask(t.id));
+      row.querySelector('[data-erase]').addEventListener('click', () => {
+        state.tasks = state.tasks.filter(x => x.id !== t.id);
+        saveState(); renderArchive(); renderAll();
+        sfx.delete();
+      });
+      body.appendChild(row);
+    });
+  }
+
+  function renderStats() {
+    const body = $('#statsBody');
+    const all = state.tasks;
+    const completed = archivedTasks();
+    const active = activeTasks();
+
+    // Resolved counts by window
+    const now = Date.now();
+    const day = 86400000;
+    const resolved24 = completed.filter(t => new Date(t.completedAt).getTime() > now - day).length;
+    const resolved7 = completed.filter(t => new Date(t.completedAt).getTime() > now - 7 * day).length;
+    const resolved30 = completed.filter(t => new Date(t.completedAt).getTime() > now - 30 * day).length;
+
+    // Streak: consecutive days (ending today or yesterday) with at least 1 completion
+    const dayStr = (d) => d.toISOString().slice(0, 10);
+    const completionDays = new Set(completed.map(t => dayStr(new Date(t.completedAt))));
+    let streak = 0;
+    let cursor = new Date();
+    if (!completionDays.has(dayStr(cursor))) cursor.setDate(cursor.getDate() - 1);
+    while (completionDays.has(dayStr(cursor))) {
+      streak++;
+      cursor.setDate(cursor.getDate() - 1);
+    }
+
+    // Tier distribution (active)
+    const tCounts = { urgent: 0, medium: 0, low: 0 };
+    active.forEach(t => tCounts[t.tier]++);
+    const tTotal = active.length || 1;
+
+    // 7-day spark
+    const spark = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(); d.setDate(d.getDate() - i);
+      const c = completed.filter(t => dayStr(new Date(t.completedAt)) === dayStr(d)).length;
+      spark.push({ d, c });
+    }
+    const maxSpark = Math.max(1, ...spark.map(s => s.c));
+
+    body.innerHTML = `
+      <div class="stat-row">
+        <div class="stat-card">
+          <div class="stat-card__label">TOTAL RESOLVED</div>
+          <div class="stat-card__value">${completed.length}</div>
+          <div class="stat-card__sub">CAREER</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card__label">CURRENT STREAK</div>
+          <div class="stat-card__value">${streak}<span style="font-size:14px;color:var(--ash);letter-spacing:.18em;font-family:var(--font-mono);"> ${streak === 1 ? 'DAY' : 'DAYS'}</span></div>
+          <div class="stat-card__sub">CONSECUTIVE</div>
+        </div>
+      </div>
+
+      <div class="stat-row">
+        <div class="stat-card">
+          <div class="stat-card__label">RESOLVED · 24H</div>
+          <div class="stat-card__value">${resolved24}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card__label">RESOLVED · 7D</div>
+          <div class="stat-card__value">${resolved7}</div>
+        </div>
+      </div>
+
+      <div class="stat-section-title">7-DAY ACTIVITY</div>
+      <div class="stat-card" style="display:flex;align-items:flex-end;gap:6px;height:80px;padding:14px;">
+        ${spark.map(s => `
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;gap:6px;">
+            <div style="width:100%;height:${(s.c / maxSpark) * 100}%;min-height:2px;background:linear-gradient(180deg, var(--gold-bright), rgba(201,169,97,0.3));border-radius:2px;"></div>
+            <div style="font-family:var(--font-mono);font-size:8px;letter-spacing:.18em;color:var(--smoke);">${['S','M','T','W','T','F','S'][s.d.getDay()]}</div>
+          </div>`).join('')}
+      </div>
+
+      <div class="stat-section-title">ACTIVE TIER DISTRIBUTION</div>
+      <div class="bar-row">
+        <div class="bar-row__label">URGENT</div>
+        <div class="bar-row__bar"><div class="bar-row__fill" style="width:${(tCounts.urgent/tTotal)*100}%;background:linear-gradient(90deg,var(--crimson),var(--crimson-bright));"></div></div>
+        <div class="bar-row__value">${tCounts.urgent}</div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-row__label">MEDIUM</div>
+        <div class="bar-row__bar"><div class="bar-row__fill" style="width:${(tCounts.medium/tTotal)*100}%;background:linear-gradient(90deg,var(--amber),var(--amber-bright));"></div></div>
+        <div class="bar-row__value">${tCounts.medium}</div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-row__label">LOW</div>
+        <div class="bar-row__bar"><div class="bar-row__fill" style="width:${(tCounts.low/tTotal)*100}%;background:linear-gradient(90deg,var(--azure),var(--azure-bright));"></div></div>
+        <div class="bar-row__value">${tCounts.low}</div>
+      </div>
+
+      <div class="stat-section-title">TOTALS</div>
+      <div class="stat-row">
+        <div class="stat-card">
+          <div class="stat-card__label">ACTIVE</div>
+          <div class="stat-card__value">${active.length}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card__label">RESOLVED · 30D</div>
+          <div class="stat-card__value">${resolved30}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  // ---------- Search ----------
+  function setupSearch() {
+    const input = $('#searchInput');
+    input.addEventListener('input', () => {
+      const q = input.value.trim().toLowerCase();
+      $$('.task').forEach(card => {
+        const t = state.tasks.find(x => x.id === card.dataset.id);
+        if (!t) return;
+        const hay = (t.title + ' ' + (t.notes || '')).toLowerCase();
+        card.style.display = (!q || hay.includes(q)) ? '' : 'none';
+      });
+    });
+  }
+
+  // ---------- Settings ----------
+  function applySettings() {
+    document.body.classList.toggle('no-scan', !settings.scanline);
+    document.body.classList.toggle('focus-mode', !!settings.focus);
+    $('#setName').value = settings.name || '';
+    $('#setSound').checked = !!settings.sound;
+    $('#setScan').checked = !!settings.scanline;
+    $('#setFocus').checked = !!settings.focus;
+  }
+
+  function exportData() {
+    const blob = new Blob([JSON.stringify({ state, settings }, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `aegis-export-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('EXPORT COMPLETE', 'gold');
+  }
+  function importData(file) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target.result);
+        if (data.state && Array.isArray(data.state.tasks)) {
+          state = data.state;
+          if (data.settings) settings = { ...defaultSettings, ...data.settings };
+          saveState(); saveSettings();
+          applySettings();
+          renderAll();
+          showToast('IMPORT COMPLETE', 'gold');
+        } else {
+          showToast('IMPORT FAILED');
+        }
+      } catch {
+        showToast('IMPORT FAILED');
+      }
+    };
+    reader.readAsText(file);
+  }
+  function wipeAll() {
+    if (!confirm('This will permanently erase all directives, archive, and settings. Continue?')) return;
+    state = structuredClone(defaultState);
+    settings = { ...defaultSettings };
+    saveState(); saveSettings();
+    applySettings(); renderAll();
+    showToast('TERMINAL WIPED');
+  }
+
+  // ---------- Wire-up ----------
+  function setup() {
+    runBoot();
+    tickClock();
+    applySettings();
+    renderAll();
+
+    // FAB
+    $('#fab').addEventListener('click', () => openCreateModal('urgent'));
+
+    // Add buttons in columns
+    $$('[data-add]').forEach(b => {
+      b.addEventListener('click', () => openCreateModal(b.dataset.add));
+    });
+
+    // Modal
+    $$('#taskModal [data-close]').forEach(el => el.addEventListener('click', hideModal));
+    $('#saveBtn').addEventListener('click', commitModal);
+    $('#deleteBtn').addEventListener('click', () => {
+      if (!editingId) return;
+      if (confirm('Permanently delete this directive?')) {
+        deleteTask(editingId);
+        hideModal();
+      }
+    });
+    $$('#fieldTier .seg__btn').forEach(b => b.addEventListener('click', () => setSegTier(b.dataset.tier)));
+
+    // Sheets
+    $('#archiveBtn').addEventListener('click', () => { renderArchive(); openSheet('archiveSheet'); });
+    $('#statsBtn').addEventListener('click', () => { renderStats(); openSheet('statsSheet'); });
+    $('#settingsBtn').addEventListener('click', () => openSheet('settingsSheet'));
+    $$('[data-close-sheet]').forEach(el => el.addEventListener('click', closeAllSheets));
+
+    // Archive actions
+    $('#purgeBtn').addEventListener('click', purgeArchive);
+    $('#restoreAllBtn').addEventListener('click', () => {
+      archivedTasks().forEach(t => { t.completed = false; t.completedAt = null; });
+      // resequence
+      ['urgent','medium','low'].forEach(tier => {
+        activeTasks().filter(x => x.tier === tier).forEach((x, i) => x.order = i);
+      });
+      saveState(); renderAll(); renderArchive();
+      showToast('ALL DIRECTIVES REINSTATED', 'gold');
+    });
+
+    // Settings inputs
+    $('#setName').addEventListener('input', (e) => { settings.name = e.target.value; saveSettings(); });
+    $('#setSound').addEventListener('change', (e) => {
+      settings.sound = e.target.checked; saveSettings();
+      if (settings.sound) sfx.tap();
+    });
+    $('#setScan').addEventListener('change', (e) => {
+      settings.scanline = e.target.checked; saveSettings(); applySettings();
+    });
+    $('#setFocus').addEventListener('change', (e) => {
+      settings.focus = e.target.checked; saveSettings(); applySettings();
+    });
+    $('#exportBtn').addEventListener('click', exportData);
+    $('#importBtn').addEventListener('click', () => $('#importInput').click());
+    $('#importInput').addEventListener('change', (e) => {
+      const file = e.target.files[0]; if (file) importData(file);
+      e.target.value = '';
+    });
+    $('#wipeBtn').addEventListener('click', wipeAll);
+
+    // Search
+    $('#searchBtn').addEventListener('click', toggleSearch);
+    $('#searchClose').addEventListener('click', () => { $('#filterbar').hidden = true; $('#searchInput').value = ''; renderAll(); });
+    setupSearch();
+
+    // DnD
+    setupDnD();
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+      const inField = e.target.matches('input, textarea, [contenteditable]');
+      // Cmd/Ctrl+Enter inside modal
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        if ($('#taskModal').classList.contains('is-on')) { commitModal(); e.preventDefault(); }
+        return;
+      }
+      if (inField) return;
+      if (e.key === 'Escape') {
+        if ($('#taskModal').classList.contains('is-on')) hideModal();
+        else closeAllSheets();
+        if (!$('#filterbar').hidden) { $('#filterbar').hidden = true; $('#searchInput').value = ''; renderAll(); }
+      }
+      if (e.key === 'n' || e.key === 'N') { openCreateModal('urgent'); e.preventDefault(); }
+      if (e.key === '/') { toggleSearch(); e.preventDefault(); }
+      if (e.key === 'a' || e.key === 'A') { renderArchive(); openSheet('archiveSheet'); }
+      if (e.key === 'f' || e.key === 'F') {
+        settings.focus = !settings.focus; saveSettings(); applySettings();
+        showToast(settings.focus ? 'FOCUS MODE · ON' : 'FOCUS MODE · OFF', 'gold');
+      }
+    });
+
+    // Service worker
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(() => { /* ignore */ });
+    }
+
+    // Update time-sensitive cards every minute
+    setInterval(renderAll, 60_000);
+  }
+
+  function toggleSearch() {
+    const fb = $('#filterbar');
+    fb.hidden = !fb.hidden;
+    if (!fb.hidden) {
+      setTimeout(() => $('#searchInput').focus(), 50);
+    } else {
+      $('#searchInput').value = '';
+      renderAll();
+    }
+  }
+
+  // Seed example directives if first run
+  function seedIfEmpty() {
+    if (state.tasks.length > 0) return;
+    const now = new Date();
+    const in2h = new Date(now.getTime() + 2 * 3600 * 1000).toISOString();
+    const tomorrow = new Date(now.getTime() + 26 * 3600 * 1000).toISOString();
+    state.tasks = [
+      { id: uid(), title: 'Review classified field report', notes: 'Cross-reference with last quarter findings before evening briefing.', tier: 'urgent', when: in2h, completed: false, completedAt: null, createdAt: nowISO(), order: 0 },
+      { id: uid(), title: 'Draft weekly intelligence summary', notes: '', tier: 'medium', when: tomorrow, completed: false, completedAt: null, createdAt: nowISO(), order: 0 },
+      { id: uid(), title: 'Read recommended dossier on counter-surveillance', notes: '', tier: 'low', when: null, completed: false, completedAt: null, createdAt: nowISO(), order: 0 },
+    ];
+    saveState();
+  }
+
+  // Boot
+  document.addEventListener('DOMContentLoaded', () => {
+    seedIfEmpty();
+    setup();
+  });
+})();
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./service-worker.js')
+      .catch(err => console.error('SW registration failed:', err));
+  });
+}
